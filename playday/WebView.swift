@@ -18,6 +18,7 @@ public struct WebView: UIViewRepresentable {
     public var requestBuilder: ((URL) -> URLRequest)?
 
     public var enablePullToRefresh: Bool = false
+    public var enableConsoleBridge: Bool = false
 
     public init(
         url: URL,
@@ -28,7 +29,8 @@ public struct WebView: UIViewRepresentable {
         onError: ((Error) -> Void)? = nil,
         configurationProvider: (() -> WKWebViewConfiguration)? = nil,
         requestBuilder: ((URL) -> URLRequest)? = nil,
-        enablePullToRefresh: Bool = false
+        enablePullToRefresh: Bool = false,
+        enableConsoleBridge: Bool = false
     ) {
         self.url = url
         self._isLoading = isLoading
@@ -39,6 +41,7 @@ public struct WebView: UIViewRepresentable {
         self.configurationProvider = configurationProvider
         self.requestBuilder = requestBuilder
         self.enablePullToRefresh = enablePullToRefresh
+        self.enableConsoleBridge = enableConsoleBridge
     }
 
     public func makeCoordinator() -> Coordinator {
@@ -102,26 +105,29 @@ public struct WebView: UIViewRepresentable {
             config.requiresUserActionForMediaPlayback = false
         }
 
-        // Console bridge script (main frame only)
-        let js = """
-        (function() {
-            function wrap(level) {
-                var original = console[level];
-                console[level] = function() {
-                    try {
-                        var msg = Array.prototype.slice.call(arguments).map(String).join(' ');
-                        var meta = { level: level, url: document.location.href, stack: (new Error()).stack || '' };
-                        window.webkit.messageHandlers.consoleBridge.postMessage({ message: msg, meta: meta });
-                    } catch (e) {}
-                    if (original) { try { original.apply(console, arguments); } catch (e) {} }
-                };
-            }
-            ['log','warn','error'].forEach(wrap);
-        })();
-        """
-        let userScript = WKUserScript(source: js, injectionTime: .atDocumentStart, forMainFrameOnly: true)
-        config.userContentController.addUserScript(userScript)
-        config.userContentController.add(WeakScriptMessageHandler(delegate: coordinator), name: Self.consoleBridgeHandlerName)
+        if enableConsoleBridge {
+            // Console bridge script (main frame only)
+            let js = """
+            (function() {
+                function wrap(level) {
+                    var original = console[level];
+                    console[level] = function() {
+                        try {
+                            var msg = Array.prototype.slice.call(arguments).map(String).join(' ');
+                            var meta = { level: level, url: document.location.href, stack: (new Error()).stack || '' };
+                            window.webkit.messageHandlers.consoleBridge.postMessage({ message: msg, meta: meta });
+                        } catch (e) {}
+                        if (original) { try { original.apply(console, arguments); } catch (e) {} }
+                    };
+                }
+                ['log','warn','error'].forEach(wrap);
+            })();
+            """
+            let userScript = WKUserScript(source: js, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+            config.userContentController.addUserScript(userScript)
+            config.userContentController.add(WeakScriptMessageHandler(delegate: coordinator), name: Self.consoleBridgeHandlerName)
+        }
+
         return config
     }
 
