@@ -51,6 +51,7 @@ public struct WebView: UIViewRepresentable {
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
         context.coordinator.attach(to: webView)
+        context.coordinator.lastReloadTrigger = reloadTrigger
 
         // Pull to refresh
         if enablePullToRefresh {
@@ -61,7 +62,7 @@ public struct WebView: UIViewRepresentable {
         }
 
         // Initial load
-        load(url: url, in: webView)
+        load(url: url, in: webView, coordinator: context.coordinator)
         return webView
     }
 
@@ -70,18 +71,24 @@ public struct WebView: UIViewRepresentable {
     }
 
     public func updateUIView(_ uiView: WKWebView, context: Context) {
-        // Avoid reload during in-flight navigation
-        guard !uiView.isLoading else { return }
-
-        let current = uiView.url?.absoluteString
         let target = url.absoluteString
-        if current != target || context.coordinator.lastReloadTrigger != reloadTrigger {
+        let reloadRequested = context.coordinator.lastReloadTrigger != reloadTrigger
+
+        if reloadRequested {
             context.coordinator.lastReloadTrigger = reloadTrigger
-            load(url: url, in: uiView)
+            load(url: url, in: uiView, coordinator: context.coordinator)
+            return
         }
+
+        if context.coordinator.isDisplayingOrNavigating(to: target, in: uiView) {
+            return
+        }
+
+        load(url: url, in: uiView, coordinator: context.coordinator)
     }
 
-    private func load(url: URL, in webView: WKWebView) {
+    private func load(url: URL, in webView: WKWebView, coordinator: Coordinator) {
+        coordinator.pendingURLString = url.absoluteString
         let request = requestBuilder?(url) ?? URLRequest(url: url)
         webView.load(request)
     }
@@ -122,6 +129,7 @@ public struct WebView: UIViewRepresentable {
         var parent: WebView
         var refreshControl: UIRefreshControl?
         var lastReloadTrigger: Int = 0
+        var pendingURLString: String?
         private weak var webView: WKWebView?
         private var estimatedProgressObservation: NSKeyValueObservation?
         private var titleObservation: NSKeyValueObservation?
@@ -149,6 +157,7 @@ public struct WebView: UIViewRepresentable {
         func detach(from webView: WKWebView) {
             refreshControl?.endRefreshing()
             refreshControl = nil
+            pendingURLString = nil
             estimatedProgressObservation?.invalidate()
             estimatedProgressObservation = nil
             titleObservation?.invalidate()
@@ -160,11 +169,20 @@ public struct WebView: UIViewRepresentable {
             self.webView = nil
         }
 
+        func isDisplayingOrNavigating(to targetURLString: String, in webView: WKWebView) -> Bool {
+            if pendingURLString == targetURLString {
+                return true
+            }
+
+            return webView.url?.absoluteString == targetURLString
+        }
+
         // Navigation delegate
         public func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
             DispatchQueue.main.async { self.parent.isLoading = true }
         }
         public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            pendingURLString = nil
             DispatchQueue.main.async {
                 self.parent.isLoading = false
                 self.parent.pageTitle = webView.title
@@ -178,6 +196,7 @@ public struct WebView: UIViewRepresentable {
             handleError(error, webView: webView)
         }
         private func handleError(_ error: Error, webView: WKWebView) {
+            pendingURLString = nil
             let nsError = error as NSError
             let domain = nsError.domain
             let code = nsError.code
