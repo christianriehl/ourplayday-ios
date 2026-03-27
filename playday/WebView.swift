@@ -186,7 +186,7 @@ public struct WebView: UIViewRepresentable {
             DispatchQueue.main.async {
                 self.parent.isLoading = false
                 self.parent.pageTitle = webView.title
-                if let rc = self.refreshControl, rc.isRefreshing { rc.endRefreshing() }
+                self.endRefreshingIfNeeded()
             }
         }
         public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
@@ -204,7 +204,7 @@ public struct WebView: UIViewRepresentable {
             NSLog("WebView navigation error: domain=\(domain), code=\(code), url=\(failing), description=\(nsError.localizedDescription)")
             DispatchQueue.main.async {
                 self.parent.isLoading = false
-                if let rc = self.refreshControl, rc.isRefreshing { rc.endRefreshing() }
+                self.endRefreshingIfNeeded()
             }
             parent.onError?(error)
         }
@@ -233,17 +233,32 @@ public struct WebView: UIViewRepresentable {
 
         // Pull to refresh
         @objc func handleRefreshControl(_ sender: UIRefreshControl) {
-            sender.beginRefreshing()
-            if let webView = sender.superview as? WKWebView {
-                webView.reload()
-            } else {
+            guard let webView else {
                 sender.endRefreshing()
+                return
             }
+
+            guard !webView.isLoading else {
+                endRefreshingIfNeeded()
+                return
+            }
+
+            if !sender.isRefreshing {
+                sender.beginRefreshing()
+            }
+
+            webView.reload()
         }
 
         deinit {
             if let webView {
                 detach(from: webView)
+            }
+        }
+
+        private func endRefreshingIfNeeded() {
+            if let refreshControl, refreshControl.isRefreshing {
+                refreshControl.endRefreshing()
             }
         }
     }
