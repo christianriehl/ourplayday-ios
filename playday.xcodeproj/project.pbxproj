@@ -10,22 +10,9 @@
 		AA77EAB82F716EE100D02746 /* playday.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = playday.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
-/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		AA77EAC92F71750900D02746 /* Exceptions for "playday" folder in "playday" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				Info.plist,
-			);
-			target = AA77EAB72F716EE100D02746 /* playday */;
-		};
-/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
-
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		AA77EABA2F716EE100D02746 /* playday */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				AA77EAC92F71750900D02746 /* Exceptions for "playday" folder in "playday" target */,
-			);
 			path = playday;
 			sourceTree = "<group>";
 		};
