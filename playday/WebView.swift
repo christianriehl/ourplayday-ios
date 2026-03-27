@@ -2,6 +2,28 @@ import SwiftUI
 import WebKit
 
 public struct WebView: UIViewRepresentable {
+    public enum NavigationEvent {
+        case started(URL?)
+        case finished(URL?)
+        case decided(url: URL, policy: WKNavigationActionPolicy)
+        case externalNavigation(URL)
+    }
+
+    public enum NavigationErrorContext {
+        case provisionalNavigation(URL?)
+        case committedNavigation(URL?)
+    }
+
+    public struct NavigationFailure {
+        public let error: Error
+        public let context: NavigationErrorContext
+
+        public init(error: Error, context: NavigationErrorContext) {
+            self.error = error
+            self.context = context
+        }
+    }
+
     public typealias UIViewType = WKWebView
     private static let consoleBridgeHandlerName = "consoleBridge"
 
@@ -14,6 +36,8 @@ public struct WebView: UIViewRepresentable {
     // Callbacks / Injectables
     public var onDecidePolicy: ((URL) -> WKNavigationActionPolicy)?
     public var onError: ((Error) -> Void)?
+    public var onNavigationEvent: ((NavigationEvent) -> Void)?
+    public var onNavigationFailure: ((NavigationFailure) -> Void)?
     public var configurationProvider: (() -> WKWebViewConfiguration)?
     public var requestBuilder: ((URL) -> URLRequest)?
 
@@ -26,6 +50,8 @@ public struct WebView: UIViewRepresentable {
         reloadTrigger: Binding<Int> = .constant(0),
         onDecidePolicy: ((URL) -> WKNavigationActionPolicy)? = nil,
         onError: ((Error) -> Void)? = nil,
+        onNavigationEvent: ((NavigationEvent) -> Void)? = nil,
+        onNavigationFailure: ((NavigationFailure) -> Void)? = nil,
         configurationProvider: (() -> WKWebViewConfiguration)? = nil,
         requestBuilder: ((URL) -> URLRequest)? = nil,
         enablePullToRefresh: Bool = false
@@ -36,6 +62,8 @@ public struct WebView: UIViewRepresentable {
         self._reloadTrigger = reloadTrigger
         self.onDecidePolicy = onDecidePolicy
         self.onError = onError
+        self.onNavigationEvent = onNavigationEvent
+        self.onNavigationFailure = onNavigationFailure
         self.configurationProvider = configurationProvider
         self.requestBuilder = requestBuilder
         self.enablePullToRefresh = enablePullToRefresh
@@ -179,10 +207,12 @@ public struct WebView: UIViewRepresentable {
 
         // Navigation delegate
         public func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            parent.onNavigationEvent?(.started(webView.url))
             DispatchQueue.main.async { self.parent.isLoading = true }
         }
         public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             pendingURLString = nil
+            parent.onNavigationEvent?(.finished(webView.url))
             DispatchQueue.main.async {
                 self.parent.isLoading = false
                 self.parent.pageTitle = webView.title
@@ -190,18 +220,19 @@ public struct WebView: UIViewRepresentable {
             }
         }
         public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-            handleError(error, webView: webView)
+            handleError(error, context: .committedNavigation(webView.url), webView: webView)
         }
         public func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-            handleError(error, webView: webView)
+            handleError(error, context: .provisionalNavigation(webView.url), webView: webView)
         }
-        private func handleError(_ error: Error, webView: WKWebView) {
+        private func handleError(_ error: Error, context: NavigationErrorContext, webView: WKWebView) {
             pendingURLString = nil
             let nsError = error as NSError
             let domain = nsError.domain
             let code = nsError.code
             let failing = webView.url?.absoluteString ?? "unknown"
             NSLog("WebView navigation error: domain=\(domain), code=\(code), url=\(failing), description=\(nsError.localizedDescription)")
+            parent.onNavigationFailure?(NavigationFailure(error: error, context: context))
             DispatchQueue.main.async {
                 self.parent.isLoading = false
                 if let rc = self.refreshControl, rc.isRefreshing { rc.endRefreshing() }
@@ -212,9 +243,14 @@ public struct WebView: UIViewRepresentable {
         public func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
             guard let url = navigationAction.request.url else { decisionHandler(.allow); return }
             if let policy = parent.onDecidePolicy?(url) {
+                parent.onNavigationEvent?(.decided(url: url, policy: policy))
+                if policy == .cancel, navigationAction.navigationType == .linkActivated {
+                    parent.onNavigationEvent?(.externalNavigation(url))
+                }
                 // If consumer cancels, they may choose to open externally.
                 decisionHandler(policy)
             } else {
+                parent.onNavigationEvent?(.decided(url: url, policy: .allow))
                 decisionHandler(.allow)
             }
         }
