@@ -1,21 +1,10 @@
-//
-//  ContentView.swift
-//  playday
-//
-//  Created by Christian Riehl on 23.03.26.
-//
-
 import SwiftUI
 
 struct ContentView: View {
     var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
-        }
-        .padding()
+        // Ersetze 'https://deine-pwa-url.com' durch deine echte Adresse
+        WebView(url: URL(string: "https://playday.christianriehl1.workers.dev")!)
+            .edgesIgnoringSafeArea(.all)
     }
 }
 
