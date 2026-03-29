@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import WebKit
 
 struct ContentView: View {
     let incomingURL: URL?
@@ -23,6 +24,7 @@ struct ContentView: View {
                         isLoading: $isLoading,
                         pageTitle: $pageTitle,
                         reloadTrigger: $reloadTrigger,
+                        onDecidePolicy: handleNavigationPolicy(for:),
                         onNavigationEvent: handleNavigationEvent,
                         onNavigationFailure: handleNavigationFailure,
                         requestBuilder: buildRequest(for:),
@@ -123,6 +125,15 @@ struct ContentView: View {
     private func retryCurrentPage() {
         lastError = nil
         reloadTrigger += 1
+    }
+
+    private func handleNavigationPolicy(for url: URL) -> WKNavigationActionPolicy {
+        guard !AppConfiguration.shouldOpenInternally(url) else {
+            return .allow
+        }
+
+        UIApplication.shared.open(url)
+        return .cancel
     }
 
     private func buildRequest(for url: URL) -> URLRequest {

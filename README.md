@@ -29,8 +29,10 @@ xcodebuild \
 - sichtbarer Ladezustand, Fehlerzustand und Retry-Button
 - Retry bei transienten Netzwerkfehlern
 - native Dialoge fuer JavaScript `alert`, `confirm` und `prompt`
+- Universal Links fuer `playday.christianriehl1.workers.dev` sind auf App-Seite vorbereitet
 
 ## Offene Follow-ups
 
 - Universal Links Ende-zu-Ende: Issue #6
+  Es fehlt noch die `apple-app-site-association`-Datei auf der Web-Domain.
 - reproduzierbare Release-/Build-Validierung: Issue #7
