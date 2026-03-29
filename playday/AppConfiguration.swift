@@ -57,7 +57,7 @@ enum AppConfiguration {
            let components = URLComponents(url: incomingURL, resolvingAgainstBaseURL: false),
            let target = components.queryItems?.first(where: { $0.name == "url" })?.value,
            let resolvedURL = URL(string: target) {
-            return resolvedURL
+            return shouldOpenInternally(resolvedURL) ? resolvedURL : (baseURL ?? incomingURL)
         }
 
         return baseURL ?? incomingURL

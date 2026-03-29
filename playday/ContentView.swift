@@ -5,6 +5,7 @@ import WebKit
 struct ContentView: View {
     let incomingURL: URL?
 
+    @StateObject private var networkMonitor = NetworkMonitor()
     @State private var isLoading = false
     @State private var pageTitle: String?
     @State private var reloadTrigger = 0
@@ -18,7 +19,7 @@ struct ContentView: View {
     var body: some View {
         Group {
             if let currentURL {
-                ZStack(alignment: .top) {
+                ZStack {
                     WebView(
                         url: currentURL,
                         isLoading: $isLoading,
@@ -33,7 +34,8 @@ struct ContentView: View {
                     )
 
                     if isLoading {
-                        loadingOverlay
+                        Color.black.opacity(0.001)
+                            .ignoresSafeArea()
                     }
 
                     if let lastError {
@@ -41,10 +43,28 @@ struct ContentView: View {
                     }
                 }
                 .ignoresSafeArea(.all)
+                .safeAreaInset(edge: .top) {
+                    VStack(spacing: 10) {
+                        if !networkMonitor.isConnected {
+                            offlineBanner
+                        }
+
+                        if isLoading {
+                            loadingOverlay
+                        }
+                    }
+                    .padding(.top, 12)
+                }
                 .onOpenURL(perform: updateURL(for:))
                 .onChange(of: incomingURL) { _, newValue in
                     if let newValue {
                         updateURL(for: newValue)
+                    }
+                }
+                .onChange(of: networkMonitor.isConnected) { _, isConnected in
+                    guard isConnected else { return }
+                    if lastError?.isConnectivityError == true {
+                        retryCurrentPage()
                     }
                 }
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
@@ -67,9 +87,30 @@ struct ContentView: View {
         .padding(.horizontal, 18)
         .padding(.vertical, 14)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .padding(.top, 16)
+        .shadow(color: .black.opacity(0.08), radius: 12, y: 4)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Seite wird geladen")
+    }
+
+    private var offlineBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "wifi.slash")
+                .accessibilityHidden(true)
+            Text("Keine Internetverbindung")
+                .font(.subheadline.weight(.semibold))
+            Spacer()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(.orange.opacity(0.3))
+        )
+        .shadow(color: .black.opacity(0.08), radius: 12, y: 4)
+        .padding(.horizontal, 16)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Keine Internetverbindung")
     }
 
     private func errorOverlay(_ error: ErrorState) -> some View {
@@ -92,6 +133,7 @@ struct ContentView: View {
         .frame(maxWidth: 320)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         .accessibilityElement(children: .contain)
     }
 
@@ -155,6 +197,7 @@ private extension ContentView {
         let id = UUID()
         let title: String
         let message: String
+        let isConnectivityError: Bool
 
         init(error: Error) {
             let nsError = error as NSError
@@ -162,19 +205,24 @@ private extension ContentView {
             if nsError.domain == NSURLErrorDomain {
                 switch URLError.Code(rawValue: nsError.code) {
                 case .notConnectedToInternet:
+                    isConnectivityError = true
                     title = "Keine Internetverbindung"
                     message = "Sobald wieder eine Verbindung besteht, kannst du die Seite direkt erneut laden."
                 case .timedOut:
+                    isConnectivityError = true
                     title = "Laden dauert zu lange"
                     message = "Der Request ist in ein Timeout gelaufen. Ein erneuter Versuch hilft oft."
                 case .cannotFindHost, .cannotConnectToHost:
+                    isConnectivityError = true
                     title = "Server nicht erreichbar"
                     message = "Die App konnte den Server gerade nicht erreichen. Bitte versuche es erneut."
                 default:
+                    isConnectivityError = false
                     title = "Seite konnte nicht geladen werden"
                     message = nsError.localizedDescription
                 }
             } else {
+                isConnectivityError = false
                 title = "Seite konnte nicht geladen werden"
                 message = nsError.localizedDescription
             }
