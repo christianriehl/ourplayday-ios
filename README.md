@@ -22,6 +22,9 @@ xcodebuild \
   build
 ```
 
+Weiterfuehrend:
+- Release- und TestFlight-Checkliste: `docs/ios-release-checklist.md`
+
 ## Was die App aktuell absichert
 
 - Start-URL kommt aus `PLAYDAY_BASE_URL` in `playday/Info.plist`
@@ -34,5 +37,5 @@ xcodebuild \
 ## Offene Follow-ups
 
 - Universal Links Ende-zu-Ende: Issue #6
-  Es fehlt noch die `apple-app-site-association`-Datei auf der Web-Domain.
+  Die App- und Domain-Seite sind vorbereitet; der finale Geraetetest steht noch aus.
 - reproduzierbare Release-/Build-Validierung: Issue #7
