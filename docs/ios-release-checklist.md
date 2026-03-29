@@ -73,6 +73,10 @@ Fuer Geraet, TestFlight und App Store gilt:
 - Archive ueber `Product > Archive` erzeugen
 - im Organizer validieren, bevor nach TestFlight hochgeladen wird
 
+Hinweis fuer kostenlose Personal Teams:
+- `Debug` ist absichtlich ohne `Associated Domains` konfiguriert, damit lokale Kabel-Deploys auf ein iPhone funktionieren
+- `Release` behaelt die Entitlements fuer Universal Links und echtes Distribution-Signing
+
 Wenn `xcodebuild` lokal wegen Provisioning-Profilen scheitert:
 - Apple-Account in Xcode neu anmelden
 - Signing einmal im Projekt target pruefen
