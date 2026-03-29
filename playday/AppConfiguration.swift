@@ -15,22 +15,51 @@ enum AppConfiguration {
         return URL(string: fallbackBaseURLString)
     }
 
+    static var baseHost: String? {
+        baseURL?.host?.lowercased()
+    }
+
+    static var associatedDomains: [String] {
+        guard let host = baseHost else {
+            return []
+        }
+
+        return ["applinks:\(host)"]
+    }
+
+    static func shouldOpenInternally(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased() else {
+            return false
+        }
+
+        guard scheme == "http" || scheme == "https" else {
+            return false
+        }
+
+        guard let host = url.host?.lowercased(),
+              let baseHost else {
+            return false
+        }
+
+        return host == baseHost
+    }
+
     static func resolvedWebURL(for incomingURL: URL) -> URL {
+        if shouldOpenInternally(incomingURL) {
+            return incomingURL
+        }
+
         guard let scheme = incomingURL.scheme?.lowercased() else {
             return incomingURL
         }
 
-        switch scheme {
-        case "http", "https":
-            return incomingURL
-        default:
-            if let components = URLComponents(url: incomingURL, resolvingAgainstBaseURL: false),
-               let target = components.queryItems?.first(where: { $0.name == "url" })?.value,
-               let resolvedURL = URL(string: target) {
-                return resolvedURL
-            }
-
-            return baseURL ?? incomingURL
+        if scheme != "http" && scheme != "https",
+           let components = URLComponents(url: incomingURL, resolvingAgainstBaseURL: false),
+           let target = components.queryItems?.first(where: { $0.name == "url" })?.value,
+           let resolvedURL = URL(string: target) {
+            return resolvedURL
         }
+
+        return baseURL ?? incomingURL
     }
 }

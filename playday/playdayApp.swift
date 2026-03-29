@@ -17,6 +17,9 @@ struct playdayApp: App {
                 .onOpenURL { url in
                     incomingURL = url
                 }
+                .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { userActivity in
+                    incomingURL = userActivity.webpageURL
+                }
         }
     }
 }
