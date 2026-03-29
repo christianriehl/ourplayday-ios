@@ -9,9 +9,14 @@ import SwiftUI
 
 @main
 struct playdayApp: App {
+    @State private var incomingURL: URL?
+
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ContentView(incomingURL: incomingURL)
+                .onOpenURL { url in
+                    incomingURL = url
+                }
         }
     }
 }

@@ -1,4 +1,6 @@
 import SwiftUI
+import os
+import UIKit
 import WebKit
 
 public struct WebView: UIViewRepresentable {
@@ -26,6 +28,7 @@ public struct WebView: UIViewRepresentable {
 
     public typealias UIViewType = WKWebView
     private static let consoleBridgeHandlerName = "consoleBridge"
+    private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "playday", category: "WebView")
 
     // Inputs/Outputs
     public let url: URL
@@ -137,18 +140,44 @@ public struct WebView: UIViewRepresentable {
             // Console bridge script (main frame only)
             let js = """
             (function() {
+                function serialize(value) {
+                    if (typeof value === 'string') { return value; }
+                    try { return JSON.stringify(value); } catch (_) { return String(value); }
+                }
+
+                function send(level, args) {
+                    try {
+                        var message = Array.prototype.slice.call(args).map(serialize).join(' ');
+                        var meta = { level: level, url: document.location.href, stack: (new Error()).stack || '' };
+                        window.webkit.messageHandlers.consoleBridge.postMessage({ message: message, meta: meta });
+                    } catch (bridgeError) {
+                        try {
+                            var fallback = console.warn || console.log;
+                            if (fallback) {
+                                fallback.call(console, '[consoleBridge]', bridgeError && bridgeError.message ? bridgeError.message : String(bridgeError));
+                            }
+                        } catch (_) {}
+                    }
+                }
+
                 function wrap(level) {
                     var original = console[level];
                     console[level] = function() {
-                        try {
-                            var msg = Array.prototype.slice.call(arguments).map(String).join(' ');
-                            var meta = { level: level, url: document.location.href, stack: (new Error()).stack || '' };
-                            window.webkit.messageHandlers.consoleBridge.postMessage({ message: msg, meta: meta });
-                        } catch (e) {}
-                        if (original) { try { original.apply(console, arguments); } catch (e) {} }
+                        send(level, arguments);
+                        if (original) { try { original.apply(console, arguments); } catch (_) {} }
                     };
                 }
-                ['log','warn','error'].forEach(wrap);
+
+                ['log', 'warn', 'error'].forEach(wrap);
+
+                window.addEventListener('error', function(event) {
+                    send('error', [event.message, event.filename, event.lineno + ':' + event.colno]);
+                });
+
+                window.addEventListener('unhandledrejection', function(event) {
+                    var reason = event.reason && event.reason.message ? event.reason.message : String(event.reason);
+                    send('error', ['Unhandled promise rejection', reason]);
+                });
             })();
             """
             let userScript = WKUserScript(source: js, injectionTime: .atDocumentStart, forMainFrameOnly: true)
@@ -160,6 +189,16 @@ public struct WebView: UIViewRepresentable {
     }
 
     public class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
+        private static let transientErrorCodes: Set<URLError.Code> = [
+            .timedOut,
+            .networkConnectionLost,
+            .notConnectedToInternet,
+            .cannotConnectToHost,
+            .cannotFindHost,
+            .dnsLookupFailed
+        ]
+
+        private let maxAutomaticRetryCount = 1
         var parent: WebView
         var refreshControl: UIRefreshControl?
         var lastReloadTrigger: Int = 0
@@ -167,6 +206,7 @@ public struct WebView: UIViewRepresentable {
         private weak var webView: WKWebView?
         private var estimatedProgressObservation: NSKeyValueObservation?
         private var titleObservation: NSKeyValueObservation?
+        private var retryCounts: [String: Int] = [:]
 
         init(parent: WebView) {
             self.parent = parent
@@ -218,6 +258,9 @@ public struct WebView: UIViewRepresentable {
         }
         public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             pendingURLString = nil
+            if let loadedURL = webView.url?.absoluteString {
+                retryCounts[loadedURL] = 0
+            }
             parent.onNavigationEvent?(.finished(webView.url))
             DispatchQueue.main.async {
                 self.parent.isLoading = false
@@ -237,7 +280,13 @@ public struct WebView: UIViewRepresentable {
             let domain = nsError.domain
             let code = nsError.code
             let failing = webView.url?.absoluteString ?? "unknown"
-            NSLog("WebView navigation error: domain=\(domain), code=\(code), url=\(failing), description=\(nsError.localizedDescription)")
+
+            if scheduleRetryIfNeeded(for: nsError, failingURLString: failing, webView: webView) {
+                WebView.logger.notice("Retrying navigation after transient error for \(failing, privacy: .public)")
+                return
+            }
+
+            WebView.logger.error("Navigation error domain=\(domain, privacy: .public) code=\(code) url=\(failing, privacy: .public) description=\(nsError.localizedDescription, privacy: .public)")
             parent.onNavigationFailure?(NavigationFailure(error: error, context: context))
             DispatchQueue.main.async {
                 self.parent.isLoading = false
@@ -270,7 +319,7 @@ public struct WebView: UIViewRepresentable {
                   let level = meta["level"] as? String else { return }
             let url = meta["url"] as? String ?? "unknown"
             let stack = meta["stack"] as? String ?? ""
-            NSLog("[JS] \(level.uppercased()) - \(text)\nURL: \(url)\nStack: \(stack)")
+            WebView.logger.log(level: logLevel(for: level), "[JS] \(text, privacy: .public) url=\(url, privacy: .public) stack=\(stack, privacy: .public)")
         }
 
         // Pull to refresh
@@ -280,9 +329,8 @@ public struct WebView: UIViewRepresentable {
                 return
             }
 
-            guard !webView.isLoading else {
-                endRefreshingIfNeeded()
-                return
+            if webView.isLoading {
+                webView.stopLoading()
             }
 
             if !sender.isRefreshing {
@@ -290,6 +338,46 @@ public struct WebView: UIViewRepresentable {
             }
 
             webView.reload()
+        }
+
+        public func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
+            presentDialog(
+                in: webView,
+                title: webView.title,
+                message: message,
+                actions: [UIAlertAction(title: "OK", style: .default) { _ in completionHandler() }],
+                fallback: completionHandler
+            )
+        }
+
+        public func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
+            presentDialog(
+                in: webView,
+                title: webView.title,
+                message: message,
+                actions: [
+                    UIAlertAction(title: "Abbrechen", style: .cancel) { _ in completionHandler(false) },
+                    UIAlertAction(title: "OK", style: .default) { _ in completionHandler(true) }
+                ],
+                fallback: { completionHandler(false) }
+            )
+        }
+
+        public func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (String?) -> Void) {
+            guard let presenter = topPresenter(for: webView) else {
+                completionHandler(defaultText)
+                return
+            }
+
+            let alert = UIAlertController(title: webView.title, message: prompt, preferredStyle: .alert)
+            alert.addTextField { textField in
+                textField.text = defaultText
+            }
+            alert.addAction(UIAlertAction(title: "Abbrechen", style: .cancel) { _ in completionHandler(nil) })
+            alert.addAction(UIAlertAction(title: "OK", style: .default) { _ in
+                completionHandler(alert.textFields?.first?.text)
+            })
+            presenter.present(alert, animated: true)
         }
 
         deinit {
@@ -302,6 +390,87 @@ public struct WebView: UIViewRepresentable {
             if let refreshControl, refreshControl.isRefreshing {
                 refreshControl.endRefreshing()
             }
+        }
+
+        private func scheduleRetryIfNeeded(for error: NSError, failingURLString: String, webView: WKWebView) -> Bool {
+            guard error.domain == NSURLErrorDomain else {
+                return false
+            }
+
+            let code = URLError.Code(rawValue: error.code)
+            guard Self.transientErrorCodes.contains(code) else {
+                return false
+            }
+
+            let attempts = retryCounts[failingURLString, default: 0]
+            guard attempts < maxAutomaticRetryCount else {
+                return false
+            }
+
+            retryCounts[failingURLString] = attempts + 1
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self, weak webView] in
+                guard let self, let webView else { return }
+                self.parent.isLoading = true
+                webView.reload()
+            }
+            return true
+        }
+
+        private func logLevel(for level: String) -> OSLogType {
+            switch level.lowercased() {
+            case "warn":
+                return .default
+            case "error":
+                return .error
+            default:
+                return .info
+            }
+        }
+
+        private func presentDialog(in webView: WKWebView, title: String?, message: String, actions: [UIAlertAction], fallback: @escaping () -> Void) {
+            guard let presenter = topPresenter(for: webView) else {
+                fallback()
+                return
+            }
+
+            let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
+            actions.forEach(alert.addAction)
+            presenter.present(alert, animated: true)
+        }
+
+        private func topPresenter(for webView: WKWebView) -> UIViewController? {
+            if let root = webView.window?.rootViewController {
+                return topMostViewController(from: root)
+            }
+
+            let keyWindow = UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .flatMap(\.windows)
+                .first(where: \.isKeyWindow)
+
+            return topMostViewController(from: keyWindow?.rootViewController)
+        }
+
+        private func topMostViewController(from controller: UIViewController?) -> UIViewController? {
+            if let navigationController = controller as? UINavigationController {
+                return topMostViewController(from: navigationController.visibleViewController)
+            }
+
+            if let tabBarController = controller as? UITabBarController {
+                return topMostViewController(from: tabBarController.selectedViewController)
+            }
+
+            if let presentedViewController = controller?.presentedViewController {
+                return topMostViewController(from: presentedViewController)
+            }
+
+            return controller
+        }
+    }
+
+    public static func clearMemoryCache() {
+        WKWebsiteDataStore.default().removeData(ofTypes: [WKWebsiteDataTypeMemoryCache], modifiedSince: .distantPast) {
+            logger.notice("Cleared WKWebView memory cache after memory warning")
         }
     }
 
