@@ -7,17 +7,26 @@ final class NetworkMonitor: ObservableObject {
 
     private let monitor = NWPathMonitor()
     private let queue = DispatchQueue(label: "playday.network-monitor")
+    private let continuation: AsyncStream<Bool>.Continuation
 
     init() {
-        monitor.pathUpdateHandler = { [weak self] path in
-            Task { @MainActor in
-                self?.isConnected = path.status == .satisfied
-            }
+        let (stream, continuation) = AsyncStream<Bool>.makeStream()
+        self.continuation = continuation
+
+        monitor.pathUpdateHandler = { [continuation] path in
+            continuation.yield(path.status == .satisfied)
         }
         monitor.start(queue: queue)
+
+        Task {
+            for await connected in stream {
+                isConnected = connected
+            }
+        }
     }
 
     deinit {
         monitor.cancel()
+        continuation.finish()
     }
 }
