@@ -135,6 +135,11 @@ public struct WebView: UIViewRepresentable {
         } else {
             config.requiresUserActionForMediaPlayback = false
         }
+        // Append Safari token so the web app and Cloudflare treat this WebView
+        // as a browser-grade client. Without it the WKWebView UA omits "Safari",
+        // which causes Cloudflare Bot Fight Mode to block the dynamic fetch()
+        // calls made by the web app (resulting in empty search results).
+        config.applicationNameForUserAgent = "Safari/604.1"
 
         if enableConsoleBridge {
             // Console bridge script (main frame only)
